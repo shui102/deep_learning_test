@@ -4,6 +4,28 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
+class WeightedLoss(nn.Module):
+    def __init__(self):
+        super(WeightedLoss, self).__init__()
+
+    def forward(self, pred,targ,weighted=1.0):
+        loss = self._loss(pred, targ)
+        WeightedLoss = (loss*weighted).mean()
+        return WeightedLoss
+    
+class WeightedL1(WeightedLoss):
+    def _loss(self, pred, targ):
+        return torch.abs(pred-targ)
+    
+class WeightedL2(WeightedLoss):
+    def _loss(self, pred, targ):
+        return F.mse_loss(pred, targ, reduction='none')
+
+Losses = {
+    'l1': WeightedL1,
+    'l2': WeightedL2,
+}
+
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -77,3 +99,24 @@ class Diffusion(nn.Module):
         alphas = 1. - betas
         alphas_cumprod = torch.cumprod(alphas, axis=0) #(1,2,3) -> (1,2,6)
         alphas_cumprod_prev = torch.cat([torch.ones(1), alphas_cumprod[:-1]]) 
+        
+        self.register_buffer("alphas",alphas)
+        self.register_buffer("betas", betas)
+        self.register_buffer("alphas_cumprod", alphas_cumprod)
+        self.register_buffer("alphas_cumprod_prev", alphas_cumprod_prev)
+
+        #前向过程
+        self.register_buffer("sqrt_alphas_cumprod", torch.sqrt(alphas_cumprod))
+        self.register_buffer("sqrt_one_minus_alphas_cumprod", torch.sqrt(1. - alphas_cumprod))
+
+        #反向过程
+        posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
+        self.register_buffer("posterior_variance", posterior_variance)
+
+        self.register_buffer("sqrt_recip_alphas_cumprod",torch.sqrt(1.0/ alphas_cumprod))
+        self.register_buffer("sqrt_recipm_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1))
+
+        self.register_buffer("posterior_mean_coef1", betas * torch.sqrt(alphas_cumprod_prev) / (1. - alphas_cumprod))
+        self.register_buffer("posterior_mean_coef2", (1. - alphas_cumprod_prev) * torch.sqrt(alphas) / (1. - alphas_cumprod))
+
+        self.loss_fn = Losses[loss_type]()
